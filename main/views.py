@@ -177,22 +177,133 @@ class CVDetail(APIView):
 # ==========================
 # Envoi APIView
 # ==========================
+# main/views.py
+from django.shortcuts import get_object_or_404
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status, permissions
+from .models import CV, Envoi, Entreprise
+from .serializers import EnvoiSerializer
+
+from django.shortcuts import get_object_or_404
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status, permissions
+from .models import CV, Envoi, Entreprise
+from .serializers import EnvoiSerializer
+
 class EnvoiListCreate(APIView):
     permission_classes = [permissions.IsAuthenticated]
     
-
     def get(self, request):
-        envois = Envoi.objects.all()
+        """Récupère les candidatures et les statistiques selon le profil."""
+        user = request.user
+        
+        # Filtrage de base selon le type d'utilisateur
+        if user.type == 'candidat':
+            cvs = CV.objects.filter(user=user)
+            envois = Envoi.objects.filter(cv__in=cvs)
+        elif user.type == 'entreprise':
+            try:
+                envois = Envoi.objects.filter(entreprise=user.entreprise)
+            except Entreprise.DoesNotExist:
+                return Response({'error': 'Profil entreprise non trouvé'}, status=404)
+        else:
+            envois = Envoi.objects.all()
+
+        # Optimisation SQL (select_related évite les requêtes en boucle dans le serializer)
+        envois = envois.select_related('cv', 'entreprise', 'cv__user').order_by('-dateEnvoi')
+        
         serializer = EnvoiSerializer(envois, many=True)
-        return Response(serializer.data)
+        
+        # Calcul des statistiques pour le Dashboard
+        stats = {
+            'total': envois.count(),
+            'envoyes': envois.filter(statut='envoyé').count(),
+            'consultes': envois.filter(statut='consulté').count(),
+            'archives': envois.filter(statut='archivé').count(),
+        }
+        
+        return Response({
+            'statistiques': stats, 
+            'envois': serializer.data
+        }, status=status.HTTP_200_OK)
 
     def post(self, request):
-        serializer = EnvoiSerializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        """Envoi flexible : les filtres sont optionnels."""
+        if request.user.type != 'candidat':
+            return Response({'error': 'Action réservée aux candidats'}, status=403)
+        
+        # Récupération des données avec fallback (chaîne vide si absent)
+        cv_id = request.data.get('cv_id')
+        domaine = request.data.get('domaine', '').strip()
+        localisation = request.data.get('localisation', '').strip()
+        
+        if not cv_id:
+            return Response({'error': 'L\'identifiant du CV est requis'}, status=status.HTTP_400_BAD_REQUEST)
 
+        # On s'assure que le CV appartient bien à l'utilisateur connecté
+        cv = get_object_or_404(CV, cvId=cv_id, user=request.user)
+
+        # Construction dynamique du filtrage des entreprises
+        entreprises_query = Entreprise.objects.filter(recevoirCandidatures=True)
+        
+        if domaine:
+            entreprises_query = entreprises_query.filter(secteur__icontains=domaine)
+        if localisation:
+            entreprises_query = entreprises_query.filter(localisation__icontains=localisation)
+        
+        entreprises_matchees = entreprises_query.distinct()
+
+        # Si aucune entreprise ne correspond, on ne crée pas d'envois vides
+        if not entreprises_matchees.exists():
+            return Response({
+                'success': False,
+                'message': 'Aucune entreprise ne correspond à vos critères actuels.'
+            }, status=status.HTTP_200_OK)
+
+        envois_crees_count = 0
+        envois_existants = 0
+        
+        # Boucle de création massive
+        for entreprise in entreprises_matchees:
+            # defaults met à jour les champs si l'envoi existait déjà
+            envoi, created = Envoi.objects.update_or_create(
+                cv=cv,
+                entreprise=entreprise,
+                defaults={
+                    'domaine': domaine, 
+                    'localisation': localisation,
+                    'statut': 'envoyé'
+                }
+            )
+            
+            if created:
+                envois_crees_count += 1
+            else:
+                envois_existants += 1
+
+        return Response({
+            'success': True,
+            'count': envois_crees_count,
+            'deja_envoyes': envois_existants,
+            'details': {
+                'domaine_applique': domaine or 'Tous secteurs',
+                'localisation_appliquee': localisation or 'Toutes villes'
+            }
+        }, status=status.HTTP_201_CREATED)
+class EnvoiDetail(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk):
+        envoi = get_object_or_404(Envoi, pk=pk)
+        return Response(EnvoiSerializer(envoi).data)
+
+    def delete(self, request, pk):
+        envoi = get_object_or_404(Envoi, pk=pk)
+        envoi.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+    
 
 class EnvoiDetail(APIView):
     permission_classes = [permissions.IsAuthenticated]
