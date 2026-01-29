@@ -1,44 +1,55 @@
 # main/urls.py
 from django.urls import path
 from .views import (
-    UtilisateurListCreate, UtilisateurDetail,
-    EntrepriseListCreate, EntrepriseDetail,
-    CVListCreate, CVDetail,
-    EnvoiListCreate, EnvoiDetail
+    # Utilisateur
+    UtilisateurListCreate,
+    UtilisateurDetail,
+    
+    # Entreprise
+    EntrepriseListCreate,
+    EntrepriseDetail,
+    
+    # CV
+    CVListCreate,
+    CVDetail,
+    
+    # Envoi
+    EnvoiListCreate,
+    EnvoiDetail,
+    
+    # Statistiques
+    DashboardStats,
 )
 
-
-
+app_name = 'main'
 
 urlpatterns = [
-
-
-
-
-
-
-
     # ==========================
-    # Utilisateur endpoints
+    # Routes Utilisateur
     # ==========================
-    path('utilisateurs/', UtilisateurListCreate.as_view(), name='utilisateur-list'),
+    path('utilisateurs/', UtilisateurListCreate.as_view(), name='utilisateur-list-create'),
     path('utilisateurs/<int:pk>/', UtilisateurDetail.as_view(), name='utilisateur-detail'),
-
+    
     # ==========================
-    # Entreprise endpoints
+    # Routes Entreprise
     # ==========================
-    path('entreprises/', EntrepriseListCreate.as_view(), name='entreprise-list'),
+    path('entreprises/', EntrepriseListCreate.as_view(), name='entreprise-list-create'),
     path('entreprises/<int:pk>/', EntrepriseDetail.as_view(), name='entreprise-detail'),
-
+    
     # ==========================
-    # CV endpoints
+    # Routes CV
     # ==========================
-    path('cvs/', CVListCreate.as_view(), name='cv-list'),
+    path('cvs/', CVListCreate.as_view(), name='cv-list-create'),
     path('cvs/<int:pk>/', CVDetail.as_view(), name='cv-detail'),
-
+    
     # ==========================
-    # Envoi endpoints
+    # Routes Envoi (Candidatures)
     # ==========================
-    path('envois/', EnvoiListCreate.as_view(), name='envoi-list'),
+    path('envois/', EnvoiListCreate.as_view(), name='envoi-list-create'),
     path('envois/<int:pk>/', EnvoiDetail.as_view(), name='envoi-detail'),
+    
+    # ==========================
+    # Routes Statistiques
+    # ==========================
+    path('dashboard/stats/', DashboardStats.as_view(), name='dashboard-stats'),
 ]
