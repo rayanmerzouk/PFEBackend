@@ -1,115 +1,97 @@
 # main/serializers.py
-from rest_framework import serializers
+from datetime import date, timedelta
+
+from django.utils import timezone
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
-from .models import Utilisateur, Entreprise, CV, Envoi
+
+from rest_framework import serializers
+
+from .models import (
+    Utilisateur,
+    Entreprise,
+    CV,
+    Envoi,
+    Offre,
+    Competence,
+    Langue,
+)
 
 
 # ========================
-# Serializer Utilisateur
+# Utilisateur (create/update)
 # ========================
 class UtilisateurSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(
-        write_only=True,
-        required=True,
-        style={'input_type': 'password'}
-    )
-    password_confirm = serializers.CharField(
-        write_only=True,
-        required=True,
-        style={'input_type': 'password'}
-    )
+    password = serializers.CharField(write_only=True, required=True, style={"input_type": "password"})
+    password_confirm = serializers.CharField(write_only=True, required=True, style={"input_type": "password"})
 
     class Meta:
         model = Utilisateur
         fields = [
-            'id', 'email', 'username', 'type', 'nom', 'prenom',
-            'telephone', 'photoProfil', 'dateNaissance', 'adresse', 
-            'dateInscription', 'password', 'password_confirm',
-            'is_active', 'is_staff'
+            "id",
+            "email",
+            "username",
+            "type",
+            "nom",
+            "prenom",
+            "telephone",
+            "dateInscription",
+            "password",
+            "password_confirm",
         ]
-        read_only_fields = ['id', 'dateInscription', 'is_staff', 'is_superuser']
+        read_only_fields = ["id", "dateInscription"]
         extra_kwargs = {
-            'email': {'required': True},
-            'type': {'required': True},
+            "email": {"required": True},
+            "username": {"required": True},
+            "type": {"required": True},
         }
 
     def validate_email(self, value):
-        """Valider l'unicité de l'email"""
         if not value:
             raise serializers.ValidationError("L'email est obligatoire.")
-        
-        # Lors de la mise à jour, exclure l'instance actuelle
+
+        qs = Utilisateur.objects.filter(email=value)
         if self.instance:
-            if Utilisateur.objects.exclude(pk=self.instance.pk).filter(email=value).exists():
-                raise serializers.ValidationError("Cet email est déjà utilisé.")
-        else:
-            if Utilisateur.objects.filter(email=value).exists():
-                raise serializers.ValidationError("Cet email est déjà utilisé.")
-        
+            qs = qs.exclude(pk=self.instance.pk)
+
+        if qs.exists():
+            raise serializers.ValidationError("Cet email est déjà utilisé.")
         return value
 
     def validate_type(self, value):
-        """Valider le type d'utilisateur"""
-        valid_types = ['invite', 'candidat', 'entreprise']
+        valid_types = ["invite", "candidat", "entreprise"]
         if value not in valid_types:
-            raise serializers.ValidationError(
-                f"Type invalide. Choix possibles : {', '.join(valid_types)}"
-            )
+            raise serializers.ValidationError(f"Type invalide. Choix possibles : {', '.join(valid_types)}")
         return value
 
     def validate_telephone(self, value):
-        """Validation basique du téléphone"""
         if value:
-            # Supprimer les espaces et caractères spéciaux
-            cleaned = ''.join(filter(str.isdigit, value))
+            cleaned = "".join(filter(str.isdigit, value))
             if len(cleaned) < 9 or len(cleaned) > 15:
-                raise serializers.ValidationError(
-                    "Le numéro de téléphone doit contenir entre 9 et 15 chiffres."
-                )
-        return value
-
-    def validate_dateNaissance(self, value):
-        """Vérifier que l'utilisateur a au moins 16 ans"""
-        if value:
-            from datetime import date
-            today = date.today()
-            age = today.year - value.year - ((today.month, today.day) < (value.month, value.day))
-            
-            if age < 16:
-                raise serializers.ValidationError(
-                    "Vous devez avoir au moins 16 ans pour vous inscrire."
-                )
-            if age > 120:
-                raise serializers.ValidationError("Date de naissance invalide.")
-        
+                raise serializers.ValidationError("Le numéro de téléphone doit contenir entre 9 et 15 chiffres.")
         return value
 
     def validate(self, data):
-        """Validation globale"""
-        # Vérifier la correspondance des mots de passe (uniquement à la création)
+        # Création uniquement : check password + confirmation + validation Django
         if not self.instance:
-            password = data.get('password')
-            password_confirm = data.get('password_confirm')
-            
+            password = data.get("password")
+            password_confirm = data.get("password_confirm")
+
             if password != password_confirm:
-                raise serializers.ValidationError({
-                    'password_confirm': "Les mots de passe ne correspondent pas."
-                })
-            
-            # Valider la force du mot de passe avec les validateurs Django
+                raise serializers.ValidationError({"password_confirm": "Les mots de passe ne correspondent pas."})
+
             try:
                 validate_password(password)
             except DjangoValidationError as e:
-                raise serializers.ValidationError({'password': list(e.messages)})
-        
+                raise serializers.ValidationError({"password": list(e.messages)})
+
         return data
 
     def create(self, validated_data):
-        # Retirer password_confirm
-        validated_data.pop('password_confirm', None)
-        password = validated_data.pop('password')
-        
+        validated_data.pop("password_confirm", None)
+        password = validated_data.pop("password")
+
+        # Utiliser le manager si tu veux (create_user), sinon ok:
         user = Utilisateur(**validated_data)
         user.set_password(password)
         user.is_active = True
@@ -117,322 +99,472 @@ class UtilisateurSerializer(serializers.ModelSerializer):
         return user
 
     def update(self, instance, validated_data):
-        # Retirer les champs de mot de passe si présents
-        validated_data.pop('password_confirm', None)
-        password = validated_data.pop('password', None)
-        
+        validated_data.pop("password_confirm", None)
+        password = validated_data.pop("password", None)
+
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
-        
+
         if password:
             try:
                 validate_password(password, user=instance)
-                instance.set_password(password)
             except DjangoValidationError as e:
-                raise serializers.ValidationError({'password': list(e.messages)})
-        
+                raise serializers.ValidationError({"password": list(e.messages)})
+            instance.set_password(password)
+
         instance.save()
         return instance
 
 
-# ========================
-# Serializer Utilisateur (Lecture seule - pour affichage)
-# ========================
 class UtilisateurReadSerializer(serializers.ModelSerializer):
-    """Serializer simplifié pour affichage sans données sensibles"""
-    
     class Meta:
         model = Utilisateur
         fields = [
-            'id', 'username', 'email', 'type', 'nom', 'prenom',
-            'telephone', 'photoProfil', 'dateInscription'
+            "id",
+            "username",
+            "email",
+            "type",
+            "nom",
+            "prenom",
+            "telephone",
+            "dateInscription",
         ]
         read_only_fields = fields
 
 
 # ========================
-# Serializer Entreprise
+# Entreprise
 # ========================
 class EntrepriseSerializer(serializers.ModelSerializer):
-    username = serializers.CharField(source='user.username', read_only=True)
-    email = serializers.EmailField(source='user.email', read_only=True)
-    user_type = serializers.CharField(source='user.type', read_only=True)
+    username = serializers.CharField(source="user.username", read_only=True)
+    email = serializers.EmailField(source="user.email", read_only=True)
+    user_type = serializers.CharField(source="user.type", read_only=True)
 
     class Meta:
         model = Entreprise
         fields = [
-            'entrepriseId', 'user', 'nomEntreprise', 'secteur',
-            'adresse', 'ville', 'code_postal', 'pays',
-            'recevoirCandidatures', 'username', 'email', 'user_type'
+            "entrepriseId",
+            "user",
+            "nomEntreprise",
+            "secteur",
+            "ville",
+            "pays",
+            "recevoirCandidatures",
+            "username",
+            "email",
+            "user_type",
         ]
-        read_only_fields = ['entrepriseId', 'user']
-        extra_kwargs = {
-            'nomEntreprise': {'required': True},
-        }
+        read_only_fields = ["entrepriseId", "user", "username", "email", "user_type"]
+        extra_kwargs = {"nomEntreprise": {"required": True}}
 
     def validate_nomEntreprise(self, value):
-        """Valider le nom de l'entreprise"""
-        if len(value.strip()) < 2:
-            raise serializers.ValidationError(
-                "Le nom de l'entreprise doit contenir au moins 2 caractères."
-            )
-        return value.strip()
-
-    def validate_code_postal(self, value):
-        """Validation du code postal"""
-        if value:
-            cleaned = ''.join(filter(str.isdigit, value))
-            if len(cleaned) < 4 or len(cleaned) > 10:
-                raise serializers.ValidationError(
-                    "Code postal invalide."
-                )
+        value = value.strip()
+        if len(value) < 2:
+            raise serializers.ValidationError("Le nom de l'entreprise doit contenir au moins 2 caractères.")
         return value
 
     def validate(self, data):
-        """Vérifier que l'utilisateur associé est de type entreprise"""
-        request = self.context.get('request')
-        
-        # À la création, vérifier le type depuis le user du contexte
-        if not self.instance and request:
-            if request.user.type != 'entreprise':
+        """
+        En pratique, comme tu crées Entreprise via signal post_save, ton endpoint
+        devrait surtout faire du UPDATE / GET.
+        Ici on empêche la création par un user non-entreprise.
+        """
+        request = self.context.get("request")
+        if not self.instance and request and request.user.is_authenticated:
+            if request.user.type != "entreprise":
                 raise serializers.ValidationError(
-                    "Seuls les utilisateurs de type 'entreprise' peuvent créer un profil entreprise."
+                    "Seuls les utilisateurs de type 'entreprise' peuvent avoir un profil entreprise."
                 )
-        
         return data
 
 
 # ========================
-# Serializer CV
+# CV
 # ========================
 class CVSerializer(serializers.ModelSerializer):
-    user_username = serializers.CharField(source='user.username', read_only=True)
+    user_username = serializers.CharField(source="user.username", read_only=True)
     fichier_url = serializers.SerializerMethodField()
     taille_fichier = serializers.SerializerMethodField()
 
     class Meta:
         model = CV
         fields = [
-            'cvId', 'user', 'nom', 'fichier', 'fichier_url', 
-            'type', 'dateCreation', 'user_username', 'taille_fichier'
+            "cvId",
+            "user",
+            "nom",
+            "fichier",
+            "fichier_url",
+            "type",
+            "dateCreation",
+            "user_username",
+            "taille_fichier",
         ]
-        read_only_fields = ['cvId', 'dateCreation', 'user']
+        read_only_fields = ["cvId", "dateCreation", "user", "user_username", "fichier_url", "taille_fichier"]
         extra_kwargs = {
-            'nom': {'required': True},
-            'type': {'required': True},
+            "nom": {"required": True},
+            "type": {"required": True},
         }
 
     def get_fichier_url(self, obj):
-        """Retourner l'URL complète du fichier"""
-        request = self.context.get('request')
+        request = self.context.get("request")
         if obj.fichier and request:
             return request.build_absolute_uri(obj.fichier.url)
         return None
 
     def get_taille_fichier(self, obj):
-        """Retourner la taille du fichier en MB"""
         if obj.fichier:
             size_mb = obj.fichier.size / (1024 * 1024)
             return round(size_mb, 2)
         return None
 
     def validate_fichier(self, value):
-        """Valider le fichier uploadé"""
-        if value:
-            # Limite de taille : 10 MB
-            max_size = 10 * 1024 * 1024  # 10 MB
-            if value.size > max_size:
-                raise serializers.ValidationError(
-                    "La taille du fichier ne doit pas dépasser 10 MB."
-                )
-            
-            # Extensions autorisées selon le type
-            valid_extensions = {
-                'cv': ['.pdf', '.doc', '.docx'],
-                'video': ['.mp4', '.avi', '.mov', '.mkv'],
-                'portfolio': ['.pdf', '.zip', '.rar']
-            }
-            
-            file_extension = '.' + value.name.split('.')[-1].lower()
-            
+        if not value:
             return value
-        
+
+        max_size = 10 * 1024 * 1024  # 10MB
+        if value.size > max_size:
+            raise serializers.ValidationError("La taille du fichier ne doit pas dépasser 10 MB.")
         return value
 
     def validate(self, data):
-        """Validation croisée type/fichier"""
-        fichier = data.get('fichier') or (self.instance.fichier if self.instance else None)
-        type_cv = data.get('type') or (self.instance.type if self.instance else None)
-        
+        fichier = data.get("fichier") or (self.instance.fichier if self.instance else None)
+        type_cv = data.get("type") or (self.instance.type if self.instance else None)
+
+        valid_extensions = {
+            "cv": [".pdf", ".doc", ".docx"],
+            "video": [".mp4", ".avi", ".mov", ".mkv"],
+            "portfolio": [".pdf", ".zip", ".rar"],
+        }
+
         if fichier and type_cv:
-            file_extension = '.' + fichier.name.split('.')[-1].lower()
-            
-            valid_extensions = {
-                'cv': ['.pdf', '.doc', '.docx'],
-                'video': ['.mp4', '.avi', '.mov', '.mkv'],
-                'portfolio': ['.pdf', '.zip', '.rar']
-            }
-            
-            if file_extension not in valid_extensions.get(type_cv, []):
+            file_extension = "." + fichier.name.split(".")[-1].lower()
+            allowed = valid_extensions.get(type_cv, [])
+            if allowed and file_extension not in allowed:
                 raise serializers.ValidationError({
-                    'fichier': f"Extension invalide pour le type '{type_cv}'. "
-                               f"Extensions autorisées : {', '.join(valid_extensions[type_cv])}"
+                    "fichier": (
+                        f"Extension invalide pour le type '{type_cv}'. "
+                        f"Extensions autorisées : {', '.join(allowed)}"
+                    )
                 })
-        
-        # Sécurité : le user sera défini dans la vue
-        request = self.context.get('request')
-        if request and not self.instance:
-            data['user'] = request.user
-        
+
         return data
 
     def create(self, validated_data):
-        """S'assurer que le user est bien défini"""
-        if 'user' not in validated_data:
-            request = self.context.get('request')
-            if request:
-                validated_data['user'] = request.user
-        
+        request = self.context.get("request")
+        if request and request.user.is_authenticated:
+            validated_data["user"] = request.user
         return super().create(validated_data)
 
 
-# ========================
-# Serializer CV (Lecture simple)
-# ========================
 class CVListSerializer(serializers.ModelSerializer):
-    """Version simplifiée pour les listes"""
-    
     class Meta:
         model = CV
-        fields = ['cvId', 'nom', 'type', 'dateCreation']
+        fields = ["cvId", "nom", "type", "dateCreation"]
         read_only_fields = fields
 
 
 # ========================
-# Serializer Envoi
+# Compétences / Langues
 # ========================
+class CompetenceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Competence
+        fields = ["id", "nom"]
+        read_only_fields = ["id"]
+
+
+class LangueSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Langue
+        fields = ["id", "nom"]
+        read_only_fields = ["id"]
+
+
+# ========================
+# Offre
+# ========================
+class OffreSerializer(serializers.ModelSerializer):
+    entreprise_nom = serializers.CharField(source="entreprise.nomEntreprise", read_only=True)
+    entreprise_id = serializers.IntegerField(source="entreprise.entrepriseId", read_only=True)
+
+    competences = CompetenceSerializer(many=True, read_only=True)
+    langues = LangueSerializer(many=True, read_only=True)
+
+    # écriture via IDs
+    competences_ids = serializers.PrimaryKeyRelatedField(
+        queryset=Competence.objects.all(),
+        many=True,
+        write_only=True,
+        required=False,
+        source="competences",
+    )
+    langues_ids = serializers.PrimaryKeyRelatedField(
+        queryset=Langue.objects.all(),
+        many=True,
+        write_only=True,
+        required=False,
+        source="langues",
+    )
+
+    class Meta:
+        model = Offre
+        fields = [
+            "offreId",
+            "entreprise",
+            "entreprise_id",
+            "entreprise_nom",
+            "titre",
+            "poste",
+            "domaine",
+            "specialite",
+            "niveau",
+            "type_contrat",
+            "mode_travail",
+            "experience_min",
+            "experience_max",
+            "etude_min",
+            "salaire_min",
+            "salaire_max",
+            "devise",
+            "description",
+            "missions",
+            "profil_recherche",
+            "avantages",
+            "tags",
+            "ville",
+            "pays",
+            "relance_days",
+            "recevoirCandidatures",
+            "estPubliee",
+            "estArchivee",
+            "dateLimite",
+            "dateCreation",
+            "competences",
+            "langues",
+            "competences_ids",
+            "langues_ids",
+        ]
+        read_only_fields = ["offreId", "entreprise", "dateCreation", "entreprise_id", "entreprise_nom", "competences", "langues"]
+
+    def validate(self, data):
+        request = self.context.get("request")
+
+        # création: seulement entreprise
+        if not self.instance and request:
+            if not request.user.is_authenticated or request.user.type != "entreprise":
+                raise serializers.ValidationError("Seules les entreprises peuvent créer une offre.")
+            # force l'entreprise depuis le user connecté
+            data["entreprise"] = request.user.entreprise
+
+        # cohérence salaire
+        salaire_min = data.get("salaire_min")
+        salaire_max = data.get("salaire_max")
+        if salaire_min is not None and salaire_max is not None and salaire_min > salaire_max:
+            raise serializers.ValidationError({"salaire_min": "Le salaire min ne peut pas dépasser le salaire max."})
+
+        # cohérence expérience
+        exp_min = data.get("experience_min")
+        exp_max = data.get("experience_max")
+        if exp_min is not None and exp_max is not None and exp_min > exp_max:
+            raise serializers.ValidationError({"experience_min": "L'expérience min ne peut pas dépasser l'expérience max."})
+
+        return data
+
+    def create(self, validated_data):
+        competences = validated_data.pop("competences", [])
+        langues = validated_data.pop("langues", [])
+
+        offre = Offre.objects.create(**validated_data)
+        if competences:
+            offre.competences.set(competences)
+        if langues:
+            offre.langues.set(langues)
+        return offre
+
+    def update(self, instance, validated_data):
+        competences = validated_data.pop("competences", None)
+        langues = validated_data.pop("langues", None)
+
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+
+        if competences is not None:
+            instance.competences.set(competences)
+        if langues is not None:
+            instance.langues.set(langues)
+
+        return instance
+
+
+class OffreListSerializer(serializers.ModelSerializer):
+    """Version légère pour listes."""
+    entreprise_nom = serializers.CharField(source="entreprise.nomEntreprise", read_only=True)
+    entreprise_id = serializers.IntegerField(source="entreprise.entrepriseId", read_only=True)
+
+    class Meta:
+        model = Offre
+        fields = [
+            "offreId",
+            "titre",
+            "poste",
+            "domaine",
+            "specialite",
+            "type_contrat",
+            "mode_travail",
+            "ville",
+            "pays",
+            "recevoirCandidatures",
+            "estPubliee",
+            "estArchivee",
+            "entreprise_id",
+            "entreprise_nom",
+        ]
+        read_only_fields = fields
+
+
+# ========================
+# Envoi (CV -> Offre)
+# ========================
+from datetime import timedelta
+from django.utils import timezone
 from rest_framework import serializers
-from django.contrib.auth.password_validation import validate_password
-from django.core.exceptions import ValidationError as DjangoValidationError
-from .models import Utilisateur, Entreprise, CV, Envoi
 
-# ... (Les serializers Utilisateur, Entreprise et CV restent inchangés) ...
+from .models import CV, Offre, Envoi
 
-# ========================
-# Serializer Envoi (MODIFIÉ)
-# ========================
+
 class EnvoiSerializer(serializers.ModelSerializer):
-    # Informations CV (lecture)
-    cv_nom = serializers.CharField(source='cv.nom', read_only=True)
-    cv_type = serializers.CharField(source='cv.type', read_only=True)
-    cv_fichier = serializers.FileField(source='cv.fichier', read_only=True)
+    # --- Lecture: infos CV
+    cv_nom = serializers.CharField(source="cv.nom", read_only=True)
+    cv_type = serializers.CharField(source="cv.type", read_only=True)
+    cv_fichier_url = serializers.SerializerMethodField()
 
-    # Informations candidat (lecture)
-    candidat_id = serializers.IntegerField(source='cv.user.id', read_only=True)
-    candidat_nom = serializers.CharField(source='cv.user.nom', read_only=True)
-    candidat_prenom = serializers.CharField(source='cv.user.prenom', read_only=True)
-    candidat_email = serializers.EmailField(source='cv.user.email', read_only=True)
-    candidat_telephone = serializers.CharField(source='cv.user.telephone', read_only=True)
-    candidat_photo = serializers.ImageField(source='cv.user.photoProfil', read_only=True)
+    # --- Lecture: infos candidat
+    candidat_id = serializers.IntegerField(source="cv.user.id", read_only=True)
+    candidat_nom = serializers.CharField(source="cv.user.nom", read_only=True)
+    candidat_prenom = serializers.CharField(source="cv.user.prenom", read_only=True)
+    candidat_email = serializers.EmailField(source="cv.user.email", read_only=True)
+    candidat_telephone = serializers.CharField(source="cv.user.telephone", read_only=True)
 
-    # Informations entreprise (lecture)
-    entreprise_nom = serializers.CharField(source='entreprise.nomEntreprise', read_only=True)
-    # ... autres champs entreprise ...
+    # --- Lecture: infos offre
+    offre_titre = serializers.CharField(source="offre.titre", read_only=True)
+    offre_poste = serializers.CharField(source="offre.poste", read_only=True)
+    offre_domaine = serializers.CharField(source="offre.domaine", read_only=True)
+    offre_specialite = serializers.CharField(source="offre.specialite", read_only=True)
+    offre_ville = serializers.CharField(source="offre.ville", read_only=True)
+    offre_pays = serializers.CharField(source="offre.pays", read_only=True)
+    offre_type_contrat = serializers.CharField(source="offre.type_contrat", read_only=True)
+    offre_mode_travail = serializers.CharField(source="offre.mode_travail", read_only=True)
 
+    # --- Lecture: infos entreprise via offre
+    entreprise_nom = serializers.CharField(source="offre.entreprise.nomEntreprise", read_only=True)
+    entreprise_id = serializers.IntegerField(source="offre.entreprise.entrepriseId", read_only=True)
+
+    # --- Ecriture
     cv = serializers.PrimaryKeyRelatedField(queryset=CV.objects.all(), write_only=True)
-    entreprise = serializers.PrimaryKeyRelatedField(queryset=Entreprise.objects.all(), write_only=True)
+    offre = serializers.PrimaryKeyRelatedField(queryset=Offre.objects.all(), write_only=True)
+
+    statut = serializers.CharField(read_only=True)
 
     class Meta:
         model = Envoi
         fields = [
-            'envoiId', 'cv', 'entreprise', 'domaine',
-            'adresse', 'ville', 'code_postal', 'pays',
-            'dateEnvoi', 'statut',
-            'cv_nom', 'cv_type', 'cv_fichier',
-            'candidat_id', 'candidat_nom', 'candidat_prenom', 
-            'candidat_email', 'candidat_telephone', 'candidat_photo',
-            'entreprise_nom'
+            "envoiId", "cv", "offre", "dateEnvoi", "statut",
+            "cv_nom", "cv_type", "cv_fichier_url",
+            "candidat_id", "candidat_nom", "candidat_prenom", "candidat_email", "candidat_telephone",
+            "offre_titre", "offre_poste", "offre_domaine", "offre_specialite",
+            "offre_type_contrat", "offre_mode_travail", "offre_ville", "offre_pays",
+            "entreprise_id", "entreprise_nom",
         ]
-        read_only_fields = ['envoiId', 'dateEnvoi']
+        read_only_fields = ["envoiId", "dateEnvoi", "statut"]
+
+    def get_cv_fichier_url(self, obj):
+        request = self.context.get("request")
+        if request and obj.cv and obj.cv.fichier:
+            return request.build_absolute_uri(obj.cv.fichier.url)
+        return None
 
     def validate_cv(self, value):
-        request = self.context.get('request')
+        request = self.context.get("request")
         if request and request.user.is_authenticated:
+            if request.user.type != "candidat":
+                raise serializers.ValidationError("Seuls les candidats peuvent envoyer des CVs.")
             if value.user != request.user:
                 raise serializers.ValidationError("Vous ne pouvez envoyer que vos propres CVs.")
-            if request.user.type != 'candidat':
-                raise serializers.ValidationError("Seuls les candidats peuvent envoyer des CVs.")
         return value
 
-    def validate_entreprise(self, value):
+    def validate_offre(self, value):
         if not value.recevoirCandidatures:
-            raise serializers.ValidationError(f"L'entreprise '{value.nomEntreprise}' n'accepte pas de candidatures.")
-        return value
+            raise serializers.ValidationError("Cette offre ne reçoit pas de candidatures (bouton désactivé).")
 
-    def validate_statut(self, value):
-        request = self.context.get('request')
-        if not self.instance:
-            if value != 'envoye':
-                raise serializers.ValidationError("Le statut initial doit être 'envoye'.")
-        else:
-            if request and request.user.is_authenticated:
-                if not hasattr(request.user, 'entreprise') or request.user.entreprise != self.instance.entreprise:
-                    raise serializers.ValidationError("Accès refusé pour modifier le statut.")
+        if not value.entreprise.recevoirCandidatures:
+            raise serializers.ValidationError("L'entreprise de cette offre n'accepte pas de candidatures.")
+
+        if bool(getattr(value, "estArchivee", False)):
+            raise serializers.ValidationError("Cette offre est archivée.")
+
+        if not value.estPubliee:
+            raise serializers.ValidationError("Cette offre n'est pas publiée.")
+
         return value
 
     def validate(self, data):
         """
-        Note: La validation d'unicité (doublon) a été retirée pour 
-        permettre la traçabilité complète des envois.
+        Règle métier: ré-envoi uniquement après X jours (par offre)
+        (même CV -> même OFFRE).
         """
+        request = self.context.get("request")
+        if not request or not request.user.is_authenticated:
+            return data
+
+        cv = data.get("cv")
+        offre = data.get("offre")
+        if not cv or not offre:
+            return data
+
+        delay_days = getattr(offre, "relance_days", 7) or 7
+
+        last = Envoi.objects.filter(cv=cv, offre=offre).order_by("-dateEnvoi").first()
+        if last:
+            allowed_at = last.dateEnvoi + timedelta(days=delay_days)
+            if timezone.now() < allowed_at:
+                raise serializers.ValidationError(
+                    f"Vous avez déjà envoyé ce CV à cette offre. "
+                    f"Ré-envoi possible à partir du {allowed_at.strftime('%Y-%m-%d %H:%M')}."
+                )
+
         return data
 
     def create(self, validated_data):
-        if 'statut' not in validated_data:
-            validated_data['statut'] = 'envoye'
+        validated_data["statut"] = "envoye"
         return Envoi.objects.create(**validated_data)
 
 
-# ========================
-# Serializer Envoi (Liste simplifiée)
-# ========================
 class EnvoiListSerializer(serializers.ModelSerializer):
-    """Version simplifiée pour les listes"""
-    cv_nom = serializers.CharField(source='cv.nom', read_only=True)
-    entreprise_nom = serializers.CharField(source='entreprise.nomEntreprise', read_only=True)
+    cv_nom = serializers.CharField(source="cv.nom", read_only=True)
+    offre_titre = serializers.CharField(source="offre.titre", read_only=True)
+    entreprise_nom = serializers.CharField(source="offre.entreprise.nomEntreprise", read_only=True)
     candidat_nom = serializers.SerializerMethodField()
-    
+
     class Meta:
         model = Envoi
-        fields = [
-            'envoiId', 'cv_nom', 'entreprise_nom', 'candidat_nom',
-            'domaine', 'ville', 'dateEnvoi', 'statut'
-        ]
+        fields = ["envoiId", "cv_nom", "offre_titre", "entreprise_nom", "candidat_nom", "dateEnvoi", "statut"]
         read_only_fields = fields
-    
+
     def get_candidat_nom(self, obj):
-        """Nom complet du candidat"""
         user = obj.cv.user
         if user.nom and user.prenom:
             return f"{user.prenom} {user.nom}"
         return user.username
 
 
-# ========================
-# Serializer pour changement de statut (Entreprise)
-# ========================
 class EnvoiStatutSerializer(serializers.ModelSerializer):
-    """Serializer spécifique pour que l'entreprise change le statut"""
-    
     class Meta:
         model = Envoi
-        fields = ['statut']
-    
+        fields = ["statut"]
+
     def validate_statut(self, value):
-        """Seuls certains statuts sont autorisés"""
-        valid_statuts = ['en_attente', 'accepte', 'refuse']
+        valid_statuts = ["en_attente", "accepte", "refuse"]
         if value not in valid_statuts:
-            raise serializers.ValidationError(
-                f"Statut invalide. Choix : {', '.join(valid_statuts)}"
-            )
+            raise serializers.ValidationError(f"Statut invalide. Choix : {', '.join(valid_statuts)}")
         return value

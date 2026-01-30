@@ -7,706 +7,707 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.throttling import UserRateThrottle
 
 from django.shortcuts import get_object_or_404
-from django.db.models import Q, Count
 from django.db import IntegrityError
+from django.db.models import Q
 
-from .models import Utilisateur, Entreprise, CV, Envoi
+from .models import Utilisateur, Entreprise, CV, Envoi, Offre
 from .serializers import (
     UtilisateurSerializer,
     UtilisateurReadSerializer,
     EntrepriseSerializer,
     CVSerializer,
     CVListSerializer,
+    OffreSerializer,
+    OffreListSerializer,
     EnvoiSerializer,
     EnvoiListSerializer,
-    EnvoiStatutSerializer
+    EnvoiStatutSerializer,
 )
 
 
 # ==========================
 # Custom Permissions
 # ==========================
-class IsOwnerOrReadOnly(permissions.BasePermission):
-    """
-    Permission personnalisée : seul le propriétaire peut modifier
-    """
-    def has_object_permission(self, request, view, obj):
-        # Lecture autorisée pour tous
-        if request.method in permissions.SAFE_METHODS:
-            return True
-        
-        # Écriture uniquement pour le propriétaire
-        if hasattr(obj, 'user'):
-            return obj.user == request.user
-        return obj == request.user
-
-
 class IsEntreprise(permissions.BasePermission):
-    """
-    Permission : seuls les utilisateurs de type 'entreprise'
-    """
     def has_permission(self, request, view):
-        return request.user.is_authenticated and request.user.type == 'entreprise'
+        return request.user.is_authenticated and request.user.type == "entreprise"
 
 
 class IsCandidat(permissions.BasePermission):
-    """
-    Permission : seuls les utilisateurs de type 'candidat'
-    """
     def has_permission(self, request, view):
-        return request.user.is_authenticated and request.user.type == 'candidat'
+        return request.user.is_authenticated and request.user.type == "candidat"
 
 
 # ==========================
 # Custom Throttling
 # ==========================
 class EnvoiMassifThrottle(UserRateThrottle):
-    """
-    Limite les envois massifs : 5 requêtes par heure
-    """
-    rate = '5/hour'
+    rate = "5/hour"
 
 
 # ==========================
 # Utilisateur APIView
 # ==========================
 class UtilisateurListCreate(APIView):
-    """
-    GET: Liste des utilisateurs (Admin uniquement)
-    POST: Inscription publique
-    """
     parser_classes = [MultiPartParser, FormParser]
 
     def get_permissions(self):
-        """
-        Liste : Admin uniquement
-        Création : Public
-        """
-        if self.request.method == 'GET':
+        if self.request.method == "GET":
             return [permissions.IsAdminUser()]
         return [permissions.AllowAny()]
 
     def get(self, request):
-        """Liste tous les utilisateurs - ADMIN UNIQUEMENT"""
-        utilisateurs = Utilisateur.objects.all().order_by('-dateInscription')
+        utilisateurs = Utilisateur.objects.all().order_by("-dateInscription")
         serializer = UtilisateurReadSerializer(utilisateurs, many=True)
-        return Response({
-            'count': utilisateurs.count(),
-            'utilisateurs': serializer.data
-        }, status=status.HTTP_200_OK)
+        return Response({"count": utilisateurs.count(), "utilisateurs": serializer.data}, status=status.HTTP_200_OK)
 
     def post(self, request):
-        """Inscription publique d'un nouvel utilisateur"""
-        serializer = UtilisateurSerializer(data=request.data, context={'request': request})
-        
+        serializer = UtilisateurSerializer(data=request.data, context={"request": request})
         if serializer.is_valid():
             try:
                 user = serializer.save()
-                
-                # Le signal créera automatiquement l'Entreprise si type='entreprise'
-                
-                return Response({
-                    "message": "Inscription réussie",
-                    "user": UtilisateurReadSerializer(user).data
-                }, status=status.HTTP_201_CREATED)
-                
-            except IntegrityError as e:
-                return Response({
-                    "error": "Erreur d'intégrité des données",
-                    "details": "Username ou email déjà utilisé"
-                }, status=status.HTTP_400_BAD_REQUEST)
+                return Response(
+                    {"message": "Inscription réussie", "user": UtilisateurReadSerializer(user).data},
+                    status=status.HTTP_201_CREATED,
+                )
+            except IntegrityError:
+                return Response(
+                    {"error": "Erreur d'intégrité", "details": "Username ou email déjà utilisé"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             except Exception as e:
-                return Response({
-                    "error": "Erreur lors de la création",
-                    "details": str(e)
-                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
-        return Response({
-            "error": "Données invalides",
-            "details": serializer.errors
-        }, status=status.HTTP_400_BAD_REQUEST)
+                return Response(
+                    {"error": "Erreur création", "details": str(e)},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+        return Response({"error": "Données invalides", "details": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class UtilisateurDetail(APIView):
-    """
-    GET: Voir un utilisateur
-    PUT/PATCH: Modifier son propre profil uniquement
-    DELETE: Supprimer son propre compte uniquement
-    """
     permission_classes = [permissions.IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
 
     def get_object(self, pk, request):
-        """Récupère l'utilisateur avec vérification de permission"""
         user = get_object_or_404(Utilisateur, pk=pk)
-        
-        # Seul l'utilisateur lui-même ou un admin peut voir/modifier
         if user != request.user and not request.user.is_staff:
             raise PermissionDenied("Vous ne pouvez accéder qu'à votre propre profil")
-        
         return user
 
     def get(self, request, pk):
-        """Voir le profil"""
         user = self.get_object(pk, request)
-        serializer = UtilisateurReadSerializer(user)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(UtilisateurReadSerializer(user).data, status=status.HTTP_200_OK)
 
     def put(self, request, pk):
-        """Modifier le profil (complet)"""
         user = self.get_object(pk, request)
-        serializer = UtilisateurSerializer(
-            user, 
-            data=request.data, 
-            partial=False,
-            context={'request': request}
-        )
-        
+        serializer = UtilisateurSerializer(user, data=request.data, partial=False, context={"request": request})
         if serializer.is_valid():
             serializer.save()
-            return Response({
-                "message": "Profil mis à jour avec succès",
-                "user": UtilisateurReadSerializer(user).data
-            }, status=status.HTTP_200_OK)
-        
+            return Response(
+                {"message": "Profil mis à jour", "user": UtilisateurReadSerializer(user).data},
+                status=status.HTTP_200_OK,
+            )
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     def patch(self, request, pk):
-        """Modifier le profil (partiel)"""
         user = self.get_object(pk, request)
-        serializer = UtilisateurSerializer(
-            user, 
-            data=request.data, 
-            partial=True,
-            context={'request': request}
-        )
-        
+        serializer = UtilisateurSerializer(user, data=request.data, partial=True, context={"request": request})
         if serializer.is_valid():
             serializer.save()
-            return Response({
-                "message": "Profil mis à jour avec succès",
-                "user": UtilisateurReadSerializer(user).data
-            }, status=status.HTTP_200_OK)
-        
+            return Response(
+                {"message": "Profil mis à jour", "user": UtilisateurReadSerializer(user).data},
+                status=status.HTTP_200_OK,
+            )
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     def delete(self, request, pk):
-        """Supprimer son propre compte"""
         user = self.get_object(pk, request)
-        
-        # Archivage plutôt que suppression définitive (bonne pratique)
         user.is_active = False
         user.save()
-        
-        return Response({
-            "message": "Compte désactivé avec succès"
-        }, status=status.HTTP_200_OK)
+        return Response({"message": "Compte désactivé"}, status=status.HTTP_200_OK)
 
 
 # ==========================
 # Entreprise APIView
 # ==========================
 class EntrepriseListCreate(APIView):
-    """
-    GET: Liste des entreprises qui acceptent les candidatures
-    POST: Créer/Mettre à jour son profil entreprise
-    """
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        """Liste publique des entreprises acceptant les candidatures"""
-        entreprises = Entreprise.objects.filter(
-            recevoirCandidatures=True
-        ).select_related('user').order_by('nomEntreprise')
-        
-        serializer = EntrepriseSerializer(
-            entreprises, 
-            many=True,
-            context={'request': request}
+        entreprises = (
+            Entreprise.objects
+            .filter(recevoirCandidatures=True)
+            .select_related("user")
+            .order_by("nomEntreprise")
         )
-        
-        return Response({
-            'count': entreprises.count(),
-            'entreprises': serializer.data
-        }, status=status.HTTP_200_OK)
+        serializer = EntrepriseSerializer(entreprises, many=True, context={"request": request})
+        return Response({"count": entreprises.count(), "entreprises": serializer.data}, status=status.HTTP_200_OK)
 
     def post(self, request):
-        """
-        Créer ou mettre à jour son profil entreprise
-        Le signal a déjà créé l'entreprise de base lors de l'inscription
-        """
-        # Vérifier que l'utilisateur est de type entreprise
-        if request.user.type != 'entreprise':
-            return Response({
-                'error': 'Action réservée aux comptes entreprise'
-            }, status=status.HTTP_403_FORBIDDEN)
-        
+        if request.user.type != "entreprise":
+            return Response({"error": "Action réservée aux entreprises"}, status=status.HTTP_403_FORBIDDEN)
+
         try:
-            # Vérifier si l'entreprise existe déjà (créée par le signal)
             entreprise = Entreprise.objects.get(user=request.user)
-            
-            # Mise à jour
             serializer = EntrepriseSerializer(
-                entreprise,
-                data=request.data,
-                partial=True,
-                context={'request': request}
+                entreprise, data=request.data, partial=True, context={"request": request}
             )
-            
             if serializer.is_valid():
                 serializer.save()
-                return Response({
-                    'message': 'Profil entreprise mis à jour',
-                    'entreprise': serializer.data
-                }, status=status.HTTP_200_OK)
-            
+                return Response(
+                    {"message": "Profil entreprise mis à jour", "entreprise": serializer.data},
+                    status=status.HTTP_200_OK
+                )
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-            
+
         except Entreprise.DoesNotExist:
-            # Cas rare : le signal n'a pas fonctionné, on crée manuellement
-            data = request.data.copy()
-            
-            serializer = EntrepriseSerializer(
-                data=data,
-                context={'request': request}
-            )
-            
+            serializer = EntrepriseSerializer(data=request.data, context={"request": request})
             if serializer.is_valid():
-                # Forcer le user à l'utilisateur connecté
                 entreprise = serializer.save(user=request.user)
-                return Response({
-                    'message': 'Profil entreprise créé',
-                    'entreprise': serializer.data
-                }, status=status.HTTP_201_CREATED)
-            
+                return Response(
+                    {"message": "Profil entreprise créé", "entreprise": serializer.data},
+                    status=status.HTTP_201_CREATED
+                )
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 class EntrepriseDetail(APIView):
-    """
-    GET: Voir une entreprise
-    PUT/PATCH: Modifier son propre profil entreprise
-    DELETE: Désactiver son profil entreprise
-    """
     permission_classes = [permissions.IsAuthenticated]
 
-    def get_object(self, pk, request):
-        """Récupère l'entreprise"""
-        entreprise = get_object_or_404(Entreprise, pk=pk)
-        return entreprise
+    def get_object(self, pk):
+        return get_object_or_404(Entreprise, pk=pk)
 
     def get(self, request, pk):
-        """Voir le profil d'une entreprise"""
-        entreprise = self.get_object(pk, request)
-        serializer = EntrepriseSerializer(entreprise, context={'request': request})
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        entreprise = self.get_object(pk)
+        return Response(EntrepriseSerializer(entreprise, context={"request": request}).data, status=status.HTTP_200_OK)
 
     def put(self, request, pk):
-        """Modifier son profil entreprise (complet)"""
-        entreprise = self.get_object(pk, request)
-        
-        # Vérifier que c'est bien son entreprise
+        entreprise = self.get_object(pk)
         if entreprise.user != request.user:
             raise PermissionDenied("Vous ne pouvez modifier que votre propre entreprise")
-        
-        serializer = EntrepriseSerializer(
-            entreprise,
-            data=request.data,
-            partial=False,
-            context={'request': request}
-        )
-        
+
+        serializer = EntrepriseSerializer(entreprise, data=request.data, partial=False, context={"request": request})
         if serializer.is_valid():
             serializer.save()
-            return Response({
-                'message': 'Entreprise mise à jour',
-                'entreprise': serializer.data
-            }, status=status.HTTP_200_OK)
-        
+            return Response(
+                {"message": "Entreprise mise à jour", "entreprise": serializer.data},
+                status=status.HTTP_200_OK
+            )
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     def patch(self, request, pk):
-        """Modifier son profil entreprise (partiel)"""
-        entreprise = self.get_object(pk, request)
-        
+        entreprise = self.get_object(pk)
         if entreprise.user != request.user:
             raise PermissionDenied("Vous ne pouvez modifier que votre propre entreprise")
-        
-        serializer = EntrepriseSerializer(
-            entreprise,
-            data=request.data,
-            partial=True,
-            context={'request': request}
-        )
-        
+
+        serializer = EntrepriseSerializer(entreprise, data=request.data, partial=True, context={"request": request})
         if serializer.is_valid():
             serializer.save()
-            return Response({
-                'message': 'Entreprise mise à jour',
-                'entreprise': serializer.data
-            }, status=status.HTTP_200_OK)
-        
+            return Response(
+                {"message": "Entreprise mise à jour", "entreprise": serializer.data},
+                status=status.HTTP_200_OK
+            )
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     def delete(self, request, pk):
-        """Désactiver les candidatures de son entreprise"""
-        entreprise = self.get_object(pk, request)
-        
+        entreprise = self.get_object(pk)
         if entreprise.user != request.user:
-            raise PermissionDenied("Vous ne pouvez supprimer que votre propre entreprise")
-        
-        # Au lieu de supprimer, on désactive les candidatures
+            raise PermissionDenied("Vous ne pouvez désactiver que votre propre entreprise")
+
         entreprise.recevoirCandidatures = False
         entreprise.save()
-        
-        return Response({
-            'message': 'Entreprise désactivée (ne reçoit plus de candidatures)'
-        }, status=status.HTTP_200_OK)
+        return Response({"message": "Entreprise désactivée (ne reçoit plus)"}, status=status.HTTP_200_OK)
 
 
 # ==========================
 # CV APIView
 # ==========================
 class CVListCreate(APIView):
-    """
-    GET: Liste de MES CVs
-    POST: Créer un nouveau CV
-    """
     permission_classes = [permissions.IsAuthenticated, IsCandidat]
     parser_classes = [MultiPartParser, FormParser]
 
     def get(self, request):
-        """Liste des CVs de l'utilisateur connecté"""
-        cvs = CV.objects.filter(user=request.user).order_by('-dateCreation')
-        
-        # Utiliser le serializer simple pour la liste
-        serializer = CVListSerializer(cvs, many=True)
-        
-        return Response({
-            'count': cvs.count(),
-            'cvs': serializer.data
-        }, status=status.HTTP_200_OK)
+        cvs = CV.objects.filter(user=request.user).order_by("-dateCreation")
+        return Response(
+            {"count": cvs.count(), "cvs": CVListSerializer(cvs, many=True).data},
+            status=status.HTTP_200_OK
+        )
 
     def post(self, request):
-        """Créer un nouveau CV"""
-        # Le serializer ajoutera automatiquement user=request.user
-        serializer = CVSerializer(data=request.data, context={'request': request})
-        
+        serializer = CVSerializer(data=request.data, context={"request": request})
         if serializer.is_valid():
             cv = serializer.save()
-            return Response({
-                'message': 'CV créé avec succès',
-                'cv': CVSerializer(cv, context={'request': request}).data
-            }, status=status.HTTP_201_CREATED)
-        
+            return Response(
+                {"message": "CV créé", "cv": CVSerializer(cv, context={"request": request}).data},
+                status=status.HTTP_201_CREATED
+            )
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 class CVDetail(APIView):
-    """
-    GET: Voir un CV
-    PUT/PATCH: Modifier un CV
-    DELETE: Supprimer un CV
-    """
     permission_classes = [permissions.IsAuthenticated, IsCandidat]
     parser_classes = [MultiPartParser, FormParser]
 
     def get_object(self, pk, request):
-        """Récupère le CV avec vérification de propriété"""
-        cv = get_object_or_404(CV, pk=pk, user=request.user)
-        return cv
+        return get_object_or_404(CV, pk=pk, user=request.user)
 
     def get(self, request, pk):
-        """Voir un de ses CVs"""
         cv = self.get_object(pk, request)
-        serializer = CVSerializer(cv, context={'request': request})
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(CVSerializer(cv, context={"request": request}).data, status=status.HTTP_200_OK)
 
     def put(self, request, pk):
-        """Modifier un CV (complet)"""
         cv = self.get_object(pk, request)
-        serializer = CVSerializer(
-            cv,
-            data=request.data,
-            partial=False,
-            context={'request': request}
-        )
-        
+        serializer = CVSerializer(cv, data=request.data, partial=False, context={"request": request})
         if serializer.is_valid():
             serializer.save()
-            return Response({
-                'message': 'CV mis à jour',
-                'cv': serializer.data
-            }, status=status.HTTP_200_OK)
-        
+            return Response({"message": "CV mis à jour", "cv": serializer.data}, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     def patch(self, request, pk):
-        """Modifier un CV (partiel)"""
         cv = self.get_object(pk, request)
-        serializer = CVSerializer(
-            cv,
-            data=request.data,
-            partial=True,
-            context={'request': request}
-        )
-        
+        serializer = CVSerializer(cv, data=request.data, partial=True, context={"request": request})
         if serializer.is_valid():
             serializer.save()
-            return Response({
-                'message': 'CV mis à jour',
-                'cv': serializer.data
-            }, status=status.HTTP_200_OK)
-        
+            return Response({"message": "CV mis à jour", "cv": serializer.data}, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     def delete(self, request, pk):
-        """Supprimer un de ses CVs"""
         cv = self.get_object(pk, request)
         cv_nom = cv.nom
         cv.delete()
-        
-        return Response({
-            'message': f'CV "{cv_nom}" supprimé avec succès'
-        }, status=status.HTTP_200_OK)
+        return Response({"message": f'CV "{cv_nom}" supprimé'}, status=status.HTTP_200_OK)
 
 
 # ==========================
-# Envoi APIView
+# OFFRES APIViews
 # ==========================
-class EnvoiListCreate(APIView):
+class OffreList(APIView):
+    """
+    GET: Offres visibles pour candidats (estPubliee=True + recevoirCandidatures=True + pas archivée)
+    + filtres query params
+    """
     permission_classes = [permissions.IsAuthenticated]
-    throttle_classes = [EnvoiMassifThrottle]
 
     def get(self, request):
-        user = request.user
-        if user.type == 'candidat':
-            envois = Envoi.objects.filter(cv__user=user)
-        elif user.type == 'entreprise':
-            envois = Envoi.objects.filter(entreprise__user=user)
-        else:
-            envois = Envoi.objects.all()
+        qs = Offre.objects.filter(
+            estPubliee=True,
+            recevoirCandidatures=True,
+            estArchivee=False,
+            entreprise__recevoirCandidatures=True,
+        ).select_related("entreprise")
 
-        envois = envois.select_related('cv', 'entreprise').order_by('-dateEnvoi')
-        serializer = EnvoiListSerializer(envois, many=True)
-        return Response({'count': envois.count(), 'envois': serializer.data})
+        domaine = request.query_params.get("domaine")
+        specialite = request.query_params.get("specialite")
+        ville = request.query_params.get("ville")
+        pays = request.query_params.get("pays")
+        type_contrat = request.query_params.get("type_contrat")
+        mode_travail = request.query_params.get("mode_travail")
+        q = request.query_params.get("q")
+
+        if domaine:
+            qs = qs.filter(domaine__icontains=domaine)
+        if specialite:
+            qs = qs.filter(specialite__icontains=specialite)
+        if ville:
+            qs = qs.filter(ville__icontains=ville)
+        if pays:
+            qs = qs.filter(pays__icontains=pays)
+        if type_contrat:
+            qs = qs.filter(type_contrat=type_contrat)
+        if mode_travail:
+            qs = qs.filter(mode_travail=mode_travail)
+        if q:
+            qs = qs.filter(
+                Q(titre__icontains=q) |
+                Q(poste__icontains=q) |
+                Q(description__icontains=q) |
+                Q(missions__icontains=q) |
+                Q(profil_recherche__icontains=q) |
+                Q(tags__icontains=q)
+            )
+
+        qs = qs.order_by("-dateCreation")
+        serializer = OffreListSerializer(qs, many=True, context={"request": request})
+        return Response({"count": qs.count(), "offres": serializer.data}, status=status.HTTP_200_OK)
+
+
+class OffreEntrepriseListCreate(APIView):
+    """
+    GET: mes offres (entreprise)
+    POST: créer une offre (entreprise)
+    """
+    permission_classes = [permissions.IsAuthenticated, IsEntreprise]
+
+    def get(self, request):
+        qs = Offre.objects.filter(entreprise=request.user.entreprise).order_by("-dateCreation")
+        serializer = OffreSerializer(qs, many=True, context={"request": request})
+        return Response({"count": qs.count(), "offres": serializer.data}, status=status.HTTP_200_OK)
 
     def post(self, request):
-        if request.user.type != 'candidat':
-            return Response({'error': 'Action réservée aux candidats'}, status=status.HTTP_403_FORBIDDEN)
-        
-        cv_id = request.data.get('cv_id')
-        # CRITIQUE : On récupère la liste des IDs sélectionnés par le candidat
-        entreprise_ids = request.data.get('entreprise_ids', [])
-        
-        if not cv_id:
-            return Response({'error': 'L\'identifiant du CV est requis'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        if not entreprise_ids:
-            return Response({'error': 'Aucune entreprise sélectionnée dans la liste'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        cv = get_object_or_404(CV, cvId=cv_id, user=request.user)
-        
-        # On filtre les entreprises UNIQUEMENT parmi celles dont l'ID est dans la liste reçue
-        entreprises_matchees = Entreprise.objects.filter(
-            entrepriseId__in=entreprise_ids,
-            recevoirCandidatures=True
-        ).distinct()
+        serializer = OffreSerializer(data=request.data, context={"request": request})
+        if serializer.is_valid():
+            offre = serializer.save()  # entreprise forcée dans serializer
+            return Response(
+                {"message": "Offre créée", "offre": OffreSerializer(offre, context={"request": request}).data},
+                status=status.HTTP_201_CREATED
+            )
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        if not entreprises_matchees.exists():
-            return Response({
-                'success': False,
-                'message': 'Aucune entreprise valide trouvée dans votre sélection'
-            }, status=status.HTTP_200_OK)
 
-        if entreprises_matchees.count() > 100:
-            return Response({'error': 'Trop d\'entreprises (max 100)'}, status=status.HTTP_400_BAD_REQUEST)
-
-        envois_crees = []
-        erreurs = []
-
-        for entreprise in entreprises_matchees:
-            try:
-                # Création systématique pour l'historique
-                nouvel_envoi = Envoi.objects.create(
-                    cv=cv,
-                    entreprise=entreprise,
-                    domaine=entreprise.secteur,
-                    ville=entreprise.ville,
-                    adresse=entreprise.adresse,
-                    code_postal=entreprise.code_postal,
-                    pays=entreprise.pays,
-                    statut='envoye'
-                )
-                envois_crees.append(nouvel_envoi.envoiId)
-                    
-            except Exception as e:
-                erreurs.append({'entreprise': entreprise.nomEntreprise, 'erreur': str(e)})
-        
-        return Response({
-            'success': True,
-            'message': f'{len(envois_crees)} candidatures envoyées à votre sélection.',
-            'envois_ids': envois_crees,
-            'erreurs': erreurs if erreurs else None,
-            'details': {
-                'cv': cv.nom,
-                'entreprises_total': entreprises_matchees.count()
-            }
-        }, status=status.HTTP_201_CREATED)
-
-class EnvoiDetail(APIView):
+class OffreDetail(APIView):
     """
-    GET: Voir une candidature
-    PATCH: Modifier le statut (entreprise uniquement)
-    DELETE: Supprimer une candidature
+    GET: détails offre
+    PATCH/PUT: modifier (propriétaire entreprise)
+    DELETE: archive (pro)
     """
     permission_classes = [permissions.IsAuthenticated]
 
-    def get_object(self, pk, request):
-        """
-        Récupère l'envoi avec vérification des permissions
-        """
-        envoi = get_object_or_404(Envoi, pk=pk)
-        
-        # Vérifier les permissions selon le type d'utilisateur
-        if request.user.type == 'candidat':
-            # Le candidat ne peut voir que ses propres envois
-            if envoi.cv.user != request.user:
-                raise PermissionDenied("Vous ne pouvez voir que vos propres candidatures")
-                
-        elif request.user.type == 'entreprise':
-            # L'entreprise ne peut voir que les candidatures reçues
-            try:
-                if envoi.entreprise != request.user.entreprise:
-                    raise PermissionDenied("Vous ne pouvez voir que les candidatures reçues par votre entreprise")
-            except Entreprise.DoesNotExist:
-                raise PermissionDenied("Profil entreprise non trouvé")
-                
-        elif not request.user.is_staff:
-            raise PermissionDenied("Permission refusée")
-        
-        return envoi
+    def get_object(self, pk):
+        return get_object_or_404(Offre.objects.select_related("entreprise"), pk=pk)
+
+    def _must_own(self, request, offre):
+        if request.user.type != "entreprise":
+            raise PermissionDenied("Réservé aux entreprises")
+        if offre.entreprise != request.user.entreprise:
+            raise PermissionDenied("Vous ne pouvez modifier que vos offres")
+
+    def _is_visible_to_candidates(self, offre):
+        return (
+            offre.estPubliee
+            and offre.recevoirCandidatures
+            and not offre.estArchivee
+            and offre.entreprise.recevoirCandidatures
+        )
 
     def get(self, request, pk):
-        """Voir les détails d'une candidature"""
-        envoi = self.get_object(pk, request)
-        serializer = EnvoiSerializer(envoi, context={'request': request})
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        offre = self.get_object(pk)
+
+        # owner entreprise: OK
+        if request.user.type == "entreprise" and hasattr(request.user, "entreprise"):
+            if offre.entreprise == request.user.entreprise:
+                return Response(OffreSerializer(offre, context={"request": request}).data, status=status.HTTP_200_OK)
+
+        # sinon: uniquement si visible
+        if not self._is_visible_to_candidates(offre):
+            raise PermissionDenied("Offre non accessible.")
+
+        return Response(OffreSerializer(offre, context={"request": request}).data, status=status.HTTP_200_OK)
 
     def patch(self, request, pk):
-        """
-        Modifier le statut d'une candidature
-        Réservé aux entreprises pour leurs candidatures reçues
-        """
-        envoi = self.get_object(pk, request)
-        
-        # Seule l'entreprise peut modifier le statut
-        if request.user.type != 'entreprise':
-            return Response({
-                'error': 'Seules les entreprises peuvent modifier le statut des candidatures'
-            }, status=status.HTTP_403_FORBIDDEN)
-        
-        # Utiliser le serializer spécialisé pour le changement de statut
-        serializer = EnvoiStatutSerializer(
-            envoi,
-            data=request.data,
-            partial=True,
-            context={'request': request}
-        )
-        
+        offre = self.get_object(pk)
+        self._must_own(request, offre)
+
+        serializer = OffreSerializer(offre, data=request.data, partial=True, context={"request": request})
         if serializer.is_valid():
             serializer.save()
-            
-            # Retourner la candidature complète
-            envoi_complet = EnvoiSerializer(envoi, context={'request': request})
-            
-            return Response({
-                'message': f'Statut mis à jour: {envoi.get_statut_display()}',
-                'envoi': envoi_complet.data
-            }, status=status.HTTP_200_OK)
-        
+            return Response({"message": "Offre mise à jour", "offre": serializer.data}, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def put(self, request, pk):
+        offre = self.get_object(pk)
+        self._must_own(request, offre)
+
+        serializer = OffreSerializer(offre, data=request.data, partial=False, context={"request": request})
+        if serializer.is_valid():
+            serializer.save()
+            return Response({"message": "Offre mise à jour", "offre": serializer.data}, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     def delete(self, request, pk):
-        """
-        Supprimer une candidature
-        - Candidat: peut supprimer ses propres envois
-        - Entreprise: peut supprimer les candidatures reçues (archivage)
-        """
-        envoi = self.get_object(pk, request)
-        
-        envoi_info = f"{envoi.cv.nom} → {envoi.entreprise.nomEntreprise}"
-        envoi.delete()
-        
-        return Response({
-            'message': f'Candidature supprimée: {envoi_info}'
-        }, status=status.HTTP_200_OK)
+        offre = self.get_object(pk)
+        self._must_own(request, offre)
+
+        offre.estArchivee = True
+        offre.recevoirCandidatures = False
+        offre.save()
+
+        return Response({"message": "Offre archivée"}, status=status.HTTP_200_OK)
+
+
+class OffreToggleRecevoir(APIView):
+    """
+    PATCH: set recevoirCandidatures (bouton) pour une offre (entreprise propriétaire)
+    """
+    permission_classes = [permissions.IsAuthenticated, IsEntreprise]
+
+    def _parse_bool(self, value):
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            v = value.strip().lower()
+            if v in ["true", "1", "yes", "on"]:
+                return True
+            if v in ["false", "0", "no", "off"]:
+                return False
+        if isinstance(value, int):
+            if value in (0, 1):
+                return bool(value)
+        raise ValidationError({"recevoirCandidatures": "Valeur invalide (true/false)."})
+
+    def patch(self, request, pk):
+        offre = get_object_or_404(Offre.objects.select_related("entreprise"), pk=pk)
+        if offre.entreprise != request.user.entreprise:
+            raise PermissionDenied("Vous ne pouvez modifier que vos offres")
+
+        value = request.data.get("recevoirCandidatures")
+        if value is None:
+            raise ValidationError({"recevoirCandidatures": "Ce champ est requis (true/false)."})
+
+        parsed = self._parse_bool(value)
+        offre.recevoirCandidatures = parsed
+        offre.save()
+
+        return Response(
+            {
+                "message": "Mise à jour réussie",
+                "offreId": offre.offreId,
+                "recevoirCandidatures": offre.recevoirCandidatures,
+            },
+            status=status.HTTP_200_OK
+        )
 
 
 # ==========================
-# Vues statistiques (Bonus)
+# ENVOIS APIViews
+# ==========================
+class EnvoiListCreate(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_throttles(self):
+        # throttle uniquement sur POST (envoi massif)
+        if self.request.method == "POST":
+            return [EnvoiMassifThrottle()]
+        return []
+
+    def get(self, request):
+        user = request.user
+
+        if user.type == "candidat":
+            qs = Envoi.objects.filter(cv__user=user)
+        elif user.type == "entreprise":
+            qs = Envoi.objects.filter(offre__entreprise=user.entreprise)
+        elif user.is_staff:
+            qs = Envoi.objects.all()
+        else:
+            return Response({"error": "Accès refusé"}, status=status.HTTP_403_FORBIDDEN)
+
+        qs = qs.select_related("cv", "cv__user", "offre", "offre__entreprise").order_by("-dateEnvoi")
+        serializer = EnvoiListSerializer(qs, many=True, context={"request": request})
+        return Response({"count": qs.count(), "envois": serializer.data}, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        if request.user.type != "candidat":
+            return Response({"error": "Action réservée aux candidats"}, status=status.HTTP_403_FORBIDDEN)
+
+        cv_id = request.data.get("cv_id")
+        offre_ids = request.data.get("offre_ids", [])
+
+        if not cv_id:
+            return Response({"error": "L'identifiant du CV est requis"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not isinstance(offre_ids, list) or len(offre_ids) == 0:
+            return Response({"error": "Aucune offre sélectionnée"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # nettoyage IDs int + unique
+        cleaned_ids = []
+        for x in offre_ids:
+            try:
+                cleaned_ids.append(int(x))
+            except (TypeError, ValueError):
+                continue
+        cleaned_ids = list(dict.fromkeys(cleaned_ids))
+
+        if len(cleaned_ids) == 0:
+            return Response({"error": "Liste d'offres invalide"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if len(cleaned_ids) > 100:
+            return Response({"error": "Trop d'offres (max 100)"}, status=status.HTTP_400_BAD_REQUEST)
+
+        cv = get_object_or_404(CV, cvId=cv_id, user=request.user)
+
+        # offres valides : publiées + recevoir ON + non archivée + entreprise autorise globalement
+        offres = Offre.objects.filter(
+            offreId__in=cleaned_ids,
+            estPubliee=True,
+            recevoirCandidatures=True,
+            estArchivee=False,
+            entreprise__recevoirCandidatures=True,
+        ).select_related("entreprise").distinct()
+
+        if not offres.exists():
+            return Response(
+                {
+                    "success": False,
+                    "message": "Aucune offre valide trouvée dans votre sélection",
+                    "created_count": 0,
+                    "refused_count": 0,
+                    "envois_ids": [],
+                    "refusees": None,
+                },
+                status=status.HTTP_200_OK
+            )
+
+        created_ids = []
+        refused = []
+
+        for offre in offres:
+            payload = {"cv": cv.cvId, "offre": offre.offreId}
+            ser = EnvoiSerializer(data=payload, context={"request": request})
+            if ser.is_valid():
+                envoi = ser.save()
+                created_ids.append(envoi.envoiId)
+            else:
+                refused.append(
+                    {
+                        "offre": offre.titre,
+                        "offreId": offre.offreId,
+                        "entreprise": offre.entreprise.nomEntreprise,
+                        "errors": ser.errors,
+                    }
+                )
+
+        created_count = len(created_ids)
+        refused_count = len(refused)
+
+        if created_count == 0:
+            return Response(
+                {
+                    "success": False,
+                    "message": "Aucune candidature n'a pu être créée (toutes refusées).",
+                    "created_count": created_count,
+                    "refused_count": refused_count,
+                    "envois_ids": created_ids,
+                    "refusees": refused if refused else None,
+                    "details": {"cv": cv.nom, "offres_total": offres.count()},
+                },
+                status=status.HTTP_200_OK
+            )
+
+        return Response(
+            {
+                "success": True,
+                "message": f"{created_count} candidatures créées, {refused_count} refusées.",
+                "created_count": created_count,
+                "refused_count": refused_count,
+                "envois_ids": created_ids,
+                "refusees": refused if refused else None,
+                "details": {"cv": cv.nom, "offres_total": offres.count()},
+            },
+            status=status.HTTP_201_CREATED
+        )
+
+
+class EnvoiDetail(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_object(self, pk, request):
+        envoi = get_object_or_404(Envoi.objects.select_related("cv", "cv__user", "offre", "offre__entreprise"), pk=pk)
+
+        if request.user.type == "candidat":
+            if envoi.cv.user != request.user:
+                raise PermissionDenied("Vous ne pouvez voir que vos propres candidatures")
+
+        elif request.user.type == "entreprise":
+            if not hasattr(request.user, "entreprise"):
+                raise PermissionDenied("Profil entreprise non trouvé")
+            if envoi.offre.entreprise != request.user.entreprise:
+                raise PermissionDenied("Vous ne pouvez voir que les candidatures de vos offres")
+
+        elif not request.user.is_staff:
+            raise PermissionDenied("Permission refusée")
+
+        return envoi
+
+    def get(self, request, pk):
+        envoi = self.get_object(pk, request)
+        return Response(EnvoiSerializer(envoi, context={"request": request}).data, status=status.HTTP_200_OK)
+
+    def patch(self, request, pk):
+        envoi = self.get_object(pk, request)
+
+        if request.user.type != "entreprise":
+            return Response({"error": "Seules les entreprises peuvent modifier le statut"}, status=status.HTTP_403_FORBIDDEN)
+
+        if envoi.offre.entreprise != request.user.entreprise:
+            raise PermissionDenied("Accès refusé")
+
+        serializer = EnvoiStatutSerializer(envoi, data=request.data, partial=True, context={"request": request})
+        if serializer.is_valid():
+            serializer.save()
+            return Response(
+                {
+                    "message": f"Statut mis à jour: {envoi.get_statut_display()}",
+                    "envoi": EnvoiSerializer(envoi, context={"request": request}).data,
+                },
+                status=status.HTTP_200_OK
+            )
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, pk):
+        envoi = self.get_object(pk, request)
+        envoi_info = f"{envoi.cv.nom} → {envoi.offre.titre}"
+        envoi.delete()
+        return Response({"message": f"Candidature supprimée: {envoi_info}"}, status=status.HTTP_200_OK)
+
+
+# ==========================
+# Dashboard Stats
 # ==========================
 class DashboardStats(APIView):
-    """
-    Statistiques du dashboard selon le profil utilisateur
-    """
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
         user = request.user
-        
-        if user.type == 'candidat':
+
+        if user.type == "candidat":
             cvs = CV.objects.filter(user=user)
             envois = Envoi.objects.filter(cv__in=cvs)
-            
+
             stats = {
-                'total_cvs': cvs.count(),
-                'total_envois': envois.count(),
-                'envois_par_statut': {
-                    'envoye': envois.filter(statut='envoye').count(),
-                    'en_attente': envois.filter(statut='en_attente').count(),
-                    'accepte': envois.filter(statut='accepte').count(),
-                    'refuse': envois.filter(statut='refuse').count(),
+                "total_cvs": cvs.count(),
+                "total_envois": envois.count(),
+                "envois_par_statut": {
+                    "envoye": envois.filter(statut="envoye").count(),
+                    "en_attente": envois.filter(statut="en_attente").count(),
+                    "accepte": envois.filter(statut="accepte").count(),
+                    "refuse": envois.filter(statut="refuse").count(),
                 },
-                'taux_reponse': self._calculer_taux_reponse(envois),
+                "taux_reponse": self._calculer_taux_reponse(envois),
             }
-            
-        elif user.type == 'entreprise':
-            try:
-                envois = Envoi.objects.filter(entreprise=user.entreprise)
-                
-                stats = {
-                    'total_candidatures': envois.count(),
-                    'candidatures_par_statut': {
-                        'envoye': envois.filter(statut='envoye').count(),
-                        'en_attente': envois.filter(statut='en_attente').count(),
-                        'accepte': envois.filter(statut='accepte').count(),
-                        'refuse': envois.filter(statut='refuse').count(),
-                    },
-                    'candidatures_non_traitees': envois.filter(statut='envoye').count(),
-                }
-            except Entreprise.DoesNotExist:
-                return Response({
-                    'error': 'Profil entreprise non trouvé'
-                }, status=status.HTTP_404_NOT_FOUND)
+
+        elif user.type == "entreprise":
+            if not hasattr(user, "entreprise"):
+                return Response({"error": "Profil entreprise non trouvé"}, status=status.HTTP_404_NOT_FOUND)
+
+            envois = Envoi.objects.filter(offre__entreprise=user.entreprise)
+
+            stats = {
+                "total_offres": Offre.objects.filter(entreprise=user.entreprise).count(),
+                "total_candidatures": envois.count(),
+                "candidatures_par_statut": {
+                    "envoye": envois.filter(statut="envoye").count(),
+                    "en_attente": envois.filter(statut="en_attente").count(),
+                    "accepte": envois.filter(statut="accepte").count(),
+                    "refuse": envois.filter(statut="refuse").count(),
+                },
+                "candidatures_non_traitees": envois.filter(statut="envoye").count(),
+            }
+
         else:
             stats = {
-                'total_utilisateurs': Utilisateur.objects.count(),
-                'total_entreprises': Entreprise.objects.count(),
-                'total_cvs': CV.objects.count(),
-                'total_envois': Envoi.objects.count(),
+                "total_utilisateurs": Utilisateur.objects.count(),
+                "total_entreprises": Entreprise.objects.count(),
+                "total_cvs": CV.objects.count(),
+                "total_offres": Offre.objects.count(),
+                "total_envois": Envoi.objects.count(),
             }
-        
+
         return Response(stats, status=status.HTTP_200_OK)
-    
+
     def _calculer_taux_reponse(self, envois):
-        """Calcule le taux de réponse des entreprises"""
         total = envois.count()
         if total == 0:
             return 0
-        
-        reponses = envois.filter(
-            statut__in=['en_attente', 'accepte', 'refuse']
-        ).count()
-        
+        reponses = envois.filter(statut__in=["en_attente", "accepte", "refuse"]).count()
         return round((reponses / total) * 100, 2)

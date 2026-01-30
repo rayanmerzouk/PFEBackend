@@ -1,149 +1,245 @@
 # main/admin.py
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
-from .models import Utilisateur, Entreprise, CV, Envoi
 
+from .models import (
+    Utilisateur,
+    Entreprise,
+    CV,
+    Competence,
+    Langue,
+    Offre,
+    Envoi,
+)
+
+
+# =========================
+# Utilisateur
+# =========================
 @admin.register(Utilisateur)
 class UtilisateurAdmin(DjangoUserAdmin):
-    # Champs affichés dans la page de détails d'un utilisateur
+    # ✅ IMPORTANT: dateInscription est non-editable -> mettre en readonly_fields
+    readonly_fields = ("dateInscription", "last_login")
+
     fieldsets = (
         (None, {"fields": ("email", "password")}),
         ("Informations personnelles", {"fields": (
             "username", "type", "nom", "prenom",
-            "telephone", "photoProfil", "dateNaissance", "adresse"
+            "telephone",
         )}),
         ("Permissions", {"fields": (
             "is_active", "is_staff", "is_superuser", "groups", "user_permissions"
         )}),
+        # ✅ dateInscription retiré des fields (non-editable)
         ("Dates importantes", {"fields": ("last_login",)}),
     )
 
-    # Champs affichés lors de la création d'un nouvel utilisateur
     add_fieldsets = (
         (None, {
             "classes": ("wide",),
             "fields": (
                 "email", "username", "password1", "password2", "type",
-                "nom", "prenom", "telephone", "photoProfil", "dateNaissance", "adresse"
+                "nom", "prenom", "telephone",
             ),
         }),
     )
 
-    # Colonnes visibles dans la liste des utilisateurs
-    list_display = (
-        "email", "username", "type", "is_staff", "is_active", "dateInscription"
-    )
-
-    # Champs sur lesquels on peut filtrer
+    list_display = ("email", "username", "type", "is_staff", "is_active", "dateInscription")
     list_filter = ("type", "is_staff", "is_active")
-
-    # Champs sur lesquels on peut faire une recherche
     search_fields = ("email", "username", "nom", "prenom", "telephone")
-
-    # Ordre par défaut dans la liste
     ordering = ("email",)
-    filter_horizontal = ("groups", "user_permissions",)
+    filter_horizontal = ("groups", "user_permissions")
 
 
+# =========================
+# Entreprise
+# =========================
 @admin.register(Entreprise)
 class EntrepriseAdmin(admin.ModelAdmin):
-    # Colonnes visibles dans la liste des entreprises
     list_display = (
-        "entrepriseId", "nomEntreprise", "secteur", "ville", 
-        "code_postal", "pays", "recevoirCandidatures"
+        "entrepriseId", "nomEntreprise", "secteur", "ville",
+        "pays", "recevoirCandidatures"
     )
-    
-    # Champs sur lesquels on peut filtrer
     list_filter = ("secteur", "ville", "pays", "recevoirCandidatures")
-    
-    # Champs sur lesquels on peut faire une recherche
-    search_fields = ("nomEntreprise", "secteur", "ville", "adresse", "code_postal")
-    
-    # Organisation des champs dans le formulaire
-    fieldsets = (
-        ("Informations générales", {
-            "fields": ("user", "nomEntreprise", "secteur")
-        }),
-        ("Localisation", {
-            "fields": ("adresse", "ville", "code_postal", "pays")
-        }),
-        ("Paramètres", {
-            "fields": ("recevoirCandidatures",)
-        }),
-    )
-    
-    # Champs en lecture seule
+    search_fields = ("nomEntreprise", "secteur", "ville", "pays", "user__email", "user__username")
     readonly_fields = ("entrepriseId",)
-    
-    # Ordre par défaut
     ordering = ("nomEntreprise",)
 
 
+# =========================
+# CV
+# =========================
 @admin.register(CV)
 class CVAdmin(admin.ModelAdmin):
-    # Colonnes visibles dans la liste des CV
-    list_display = ("cvId", "nom", "user", "type", "dateCreation")
-    
-    # Champs sur lesquels on peut filtrer
-    list_filter = ("type", "dateCreation")
-    
-    # Champs sur lesquels on peut faire une recherche
+    list_display = ("cvId", "nom", "user", "dateCreation")
+    list_filter = ("dateCreation",)
     search_fields = ("nom", "user__username", "user__email")
-    
-    # Champs en lecture seule
     readonly_fields = ("cvId", "dateCreation")
-    
-    # Ordre par défaut
     ordering = ("-dateCreation",)
 
 
-@admin.register(Envoi)
-class EnvoiAdmin(admin.ModelAdmin):
-    # Colonnes visibles dans la liste des envois
+# =========================
+# Competence / Langue
+# =========================
+@admin.register(Competence)
+class CompetenceAdmin(admin.ModelAdmin):
+    list_display = ("id", "nom")
+    search_fields = ("nom",)
+    ordering = ("nom",)
+
+
+@admin.register(Langue)
+class LangueAdmin(admin.ModelAdmin):
+    list_display = ("id", "nom")
+    search_fields = ("nom",)
+    ordering = ("nom",)
+
+
+# =========================
+# Offre
+# =========================
+@admin.register(Offre)
+class OffreAdmin(admin.ModelAdmin):
     list_display = (
-        "envoiId", "get_cv_nom", "get_candidat", "get_entreprise", 
-        "domaine", "ville", "statut", "dateEnvoi"
+        "offreId",
+        "titre",
+        "get_entreprise",
+        "domaine",
+        "specialite",
+        "type_contrat",
+        "mode_travail",
+        "ville",
+        "pays",
+        "recevoirCandidatures",
+        "estPubliee",
+        "dateCreation",
     )
-    
-    # Champs sur lesquels on peut filtrer
-    list_filter = ("statut", "domaine", "ville", "pays", "dateEnvoi")
-    
-    # Champs sur lesquels on peut faire une recherche
+
+    list_filter = (
+        "type_contrat",
+        "mode_travail",
+        "domaine",
+        "specialite",
+        "ville",
+        "pays",
+        "recevoirCandidatures",
+        "estPubliee",
+        "dateCreation",
+    )
+
     search_fields = (
-        "cv__nom", "cv__user__username", "cv__user__email",
-        "entreprise__nomEntreprise", "domaine", "ville", "adresse"
+        "titre",
+        "domaine",
+        "specialite",
+        "ville",
+        "pays",
+        "entreprise__nomEntreprise",
+        "entreprise__user__email",
     )
-    
-    # Organisation des champs dans le formulaire
+
+    readonly_fields = ("offreId", "dateCreation")
+
     fieldsets = (
-        ("Informations de l'envoi", {
-            "fields": ("cv", "entreprise", "domaine", "statut")
-        }),
-        ("Localisation ciblée", {
-            "fields": ("adresse", "ville", "code_postal", "pays")
-        }),
-        ("Dates", {
-            "fields": ("dateEnvoi",)
-        }),
+        ("Entreprise", {"fields": ("entreprise",)}),
+        ("Détails de l'offre", {"fields": (
+            "titre", "domaine", "specialite",
+            "type_contrat", "mode_travail",
+        )}),
+        ("Compétences & langues", {"fields": ("competences", "langues")}),
+        ("Localisation", {"fields": ("ville", "pays")}),
+        ("Paramètres", {"fields": ("recevoirCandidatures", "estPubliee")}),
+        ("Dates", {"fields": ("dateCreation",)}),
     )
-    
-    # Champs en lecture seule
-    readonly_fields = ("envoiId", "dateEnvoi")
-    
-    # Ordre par défaut
-    ordering = ("-dateEnvoi",)
-    
-    # Méthodes pour afficher des informations enrichies
-    def get_cv_nom(self, obj):
-        return obj.cv.nom if obj.cv else "-"
-    get_cv_nom.short_description = "CV"
-    
-    def get_candidat(self, obj):
-        if obj.cv and obj.cv.user:
-            return f"{obj.cv.user.prenom} {obj.cv.user.nom}" if obj.cv.user.prenom else obj.cv.user.username
-        return "-"
-    get_candidat.short_description = "Candidat"
-    
+
+    filter_horizontal = ("competences", "langues")
+    ordering = ("-dateCreation",)
+
     def get_entreprise(self, obj):
         return obj.entreprise.nomEntreprise if obj.entreprise else "-"
     get_entreprise.short_description = "Entreprise"
+
+
+# =========================
+# Envoi (CV -> Offre)
+# =========================
+@admin.register(Envoi)
+class EnvoiAdmin(admin.ModelAdmin):
+    list_display = (
+        "envoiId",
+        "get_cv_nom",
+        "get_candidat",
+        "get_offre",
+        "get_entreprise",
+        "get_domaine",
+        "get_specialite",
+        "get_ville",
+        "statut",
+        "dateEnvoi",
+    )
+
+    list_filter = (
+        "statut",
+        "dateEnvoi",
+        "offre__domaine",
+        "offre__specialite",
+        "offre__type_contrat",
+        "offre__mode_travail",
+        "offre__ville",
+        "offre__pays",
+        "offre__recevoirCandidatures",
+        "offre__estPubliee",
+    )
+
+    search_fields = (
+        "cv__nom",
+        "cv__user__username",
+        "cv__user__email",
+        "offre__titre",
+        "offre__domaine",
+        "offre__specialite",
+        "offre__ville",
+        "offre__entreprise__nomEntreprise",
+    )
+
+    fieldsets = (
+        ("Envoi", {"fields": ("cv", "offre", "statut")}),
+        ("Dates", {"fields": ("dateEnvoi",)}),
+    )
+
+    readonly_fields = ("envoiId", "dateEnvoi")
+    ordering = ("-dateEnvoi",)
+
+    def get_cv_nom(self, obj):
+        return obj.cv.nom if obj.cv else "-"
+    get_cv_nom.short_description = "CV"
+
+    def get_candidat(self, obj):
+        if obj.cv and obj.cv.user:
+            u = obj.cv.user
+            if u.prenom and u.nom:
+                return f"{u.prenom} {u.nom}"
+            return u.username
+        return "-"
+    get_candidat.short_description = "Candidat"
+
+    def get_offre(self, obj):
+        return obj.offre.titre if obj.offre else "-"
+    get_offre.short_description = "Offre"
+
+    def get_entreprise(self, obj):
+        if obj.offre and obj.offre.entreprise:
+            return obj.offre.entreprise.nomEntreprise
+        return "-"
+    get_entreprise.short_description = "Entreprise"
+
+    def get_domaine(self, obj):
+        return obj.offre.domaine if obj.offre else "-"
+    get_domaine.short_description = "Domaine"
+
+    def get_specialite(self, obj):
+        return obj.offre.specialite if obj.offre else "-"
+    get_specialite.short_description = "Spécialité"
+
+    def get_ville(self, obj):
+        return obj.offre.ville if obj.offre else "-"
+    get_ville.short_description = "Ville"
