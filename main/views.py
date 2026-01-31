@@ -4,7 +4,6 @@ from rest_framework.response import Response
 from rest_framework import status, permissions
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.exceptions import PermissionDenied, ValidationError
-from rest_framework.throttling import UserRateThrottle
 from rest_framework_simplejwt.views import TokenObtainPairView
 
 from django.shortcuts import get_object_or_404
@@ -38,13 +37,6 @@ class IsEntreprise(permissions.BasePermission):
 class IsCandidat(permissions.BasePermission):
     def has_permission(self, request, view):
         return request.user.is_authenticated and request.user.type == "candidat"
-
-
-# ==========================
-# Custom Throttling
-# ==========================
-class EnvoiMassifThrottle(UserRateThrottle):
-    rate = "5/hour"
 
 
 class CustomTokenObtainPairView(TokenObtainPairView):
@@ -478,12 +470,6 @@ class OffreToggleRecevoir(APIView):
 # ==========================
 class EnvoiListCreate(APIView):
     permission_classes = [permissions.IsAuthenticated]
-
-    def get_throttles(self):
-        # throttle uniquement sur POST (envoi massif)
-        if self.request.method == "POST":
-            return [EnvoiMassifThrottle()]
-        return []
 
     def get(self, request):
         user = request.user
