@@ -5,6 +5,7 @@ from rest_framework import status, permissions
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.throttling import UserRateThrottle
+from rest_framework_simplejwt.views import TokenObtainPairView
 
 from django.shortcuts import get_object_or_404
 from django.db import IntegrityError
@@ -22,6 +23,7 @@ from .serializers import (
     EnvoiSerializer,
     EnvoiListSerializer,
     EnvoiStatutSerializer,
+    CustomTokenObtainPairSerializer,
 )
 
 
@@ -43,6 +45,10 @@ class IsCandidat(permissions.BasePermission):
 # ==========================
 class EnvoiMassifThrottle(UserRateThrottle):
     rate = "5/hour"
+
+
+class CustomTokenObtainPairView(TokenObtainPairView):
+    serializer_class = CustomTokenObtainPairSerializer
 
 
 # ==========================

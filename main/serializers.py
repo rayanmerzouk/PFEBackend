@@ -6,6 +6,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 
 from rest_framework import serializers
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
 from .models import (
     Utilisateur,
@@ -24,6 +25,7 @@ from .models import (
 class UtilisateurSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=True, style={"input_type": "password"})
     password_confirm = serializers.CharField(write_only=True, required=True, style={"input_type": "password"})
+    photo_url = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Utilisateur
@@ -35,6 +37,9 @@ class UtilisateurSerializer(serializers.ModelSerializer):
             "nom",
             "prenom",
             "telephone",
+            "dateNaissance",
+            "photoProfil",
+            "photo_url",
             "dateInscription",
             "password",
             "password_confirm",
@@ -115,8 +120,18 @@ class UtilisateurSerializer(serializers.ModelSerializer):
         instance.save()
         return instance
 
+    def get_photo_url(self, obj):
+        request = self.context.get("request")
+        if obj.photoProfil:
+            if request:
+                return request.build_absolute_uri(obj.photoProfil.url)
+            return obj.photoProfil.url
+        return None
+
 
 class UtilisateurReadSerializer(serializers.ModelSerializer):
+    photo_url = serializers.SerializerMethodField()
+
     class Meta:
         model = Utilisateur
         fields = [
@@ -127,9 +142,20 @@ class UtilisateurReadSerializer(serializers.ModelSerializer):
             "nom",
             "prenom",
             "telephone",
+            "dateNaissance",
+            "photoProfil",
+            "photo_url",
             "dateInscription",
         ]
         read_only_fields = fields
+
+    def get_photo_url(self, obj):
+        request = self.context.get("request")
+        if obj.photoProfil:
+            if request:
+                return request.build_absolute_uri(obj.photoProfil.url)
+            return obj.photoProfil.url
+        return None
 
 
 # ========================
@@ -412,6 +438,12 @@ class OffreListSerializer(serializers.ModelSerializer):
             "specialite",
             "type_contrat",
             "mode_travail",
+            "niveau",
+            "experience_min",
+            "salaire_min",
+            "etude_min",
+            "tags",
+            "relance_days",
             "ville",
             "pays",
             "recevoirCandidatures",
@@ -421,6 +453,16 @@ class OffreListSerializer(serializers.ModelSerializer):
             "entreprise_nom",
         ]
         read_only_fields = fields
+
+
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    @classmethod
+    def get_token(cls, user):
+        token = super().get_token(user)
+        token["username"] = user.username
+        token["email"] = user.email
+        token["type"] = user.type
+        return token
 
 
 # ========================

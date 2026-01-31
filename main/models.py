@@ -47,6 +47,8 @@ class Utilisateur(AbstractBaseUser, PermissionsMixin):
     nom = models.CharField(max_length=100, null=True, blank=True)
     prenom = models.CharField(max_length=100, null=True, blank=True)
     telephone = models.CharField(max_length=20, null=True, blank=True)
+    dateNaissance = models.DateField(null=True, blank=True)
+    photoProfil = models.ImageField(upload_to="photos_profil/", null=True, blank=True)
 
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)

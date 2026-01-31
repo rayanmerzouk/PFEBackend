@@ -25,7 +25,7 @@ class UtilisateurAdmin(DjangoUserAdmin):
         (None, {"fields": ("email", "password")}),
         ("Informations personnelles", {"fields": (
             "username", "type", "nom", "prenom",
-            "telephone",
+            "telephone", "dateNaissance", "photoProfil",
         )}),
         ("Permissions", {"fields": (
             "is_active", "is_staff", "is_superuser", "groups", "user_permissions"
@@ -39,7 +39,7 @@ class UtilisateurAdmin(DjangoUserAdmin):
             "classes": ("wide",),
             "fields": (
                 "email", "username", "password1", "password2", "type",
-                "nom", "prenom", "telephone",
+                "nom", "prenom", "telephone", "dateNaissance", "photoProfil",
             ),
         }),
     )
